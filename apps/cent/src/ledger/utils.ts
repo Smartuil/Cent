@@ -7,6 +7,8 @@ dayjs.extend(isSameOrBefore);
 dayjs.extend(isSameOrAfter);
 
 import { DefaultCurrencyId as DefaultBaseCurrencyId } from "@/api/currency/currencies";
+import enMessages from "@/locale/lang/en.json";
+import zhMessages from "@/locale/lang/zh.json";
 import { BillCategories } from "./category";
 import {
     type CompiledAST,
@@ -81,9 +83,54 @@ const isCateMatched = (bill: Bill, cates?: string[]) => {
     return cates?.length ? cates.some((c) => bill.categoryId === c) : true;
 };
 
-const isPlainCommentMatched = (bill: Bill, comment?: string) => {
+/** 分类名的可搜索变体：原始名 + 中英文翻译（转小写） */
+const categoryNameVariants = (name: string): string[] => {
+    const zh = (zhMessages as Record<string, string>)[name];
+    const en = (enMessages as Record<string, string>)[name];
+    return Array.from(new Set([name, zh, en]))
+        .filter((v): v is string => Boolean(v))
+        .map((v) => v.toLowerCase());
+};
+
+/** 建立 categoryId -> 分类名变体（含父分类名）的索引，用于普通关键词搜索命中分类 */
+const buildCategoryNameIndex = (
+    categories: ReadonlyArray<Pick<BillCategory, "id" | "name" | "parent">>,
+): Map<string, string[]> => {
+    const byId = new Map<string, string[]>();
+    for (const c of categories) {
+        byId.set(c.id, categoryNameVariants(c.name));
+    }
+    // 父分类名并入子分类：搜索父分类名（如“汽车”）也能命中其子分类下的账单
+    for (const c of categories) {
+        if (!c.parent) continue;
+        const merged = new Set(byId.get(c.id));
+        let current: string | undefined = c.parent;
+        const visited = new Set<string>();
+        while (current && !visited.has(current)) {
+            visited.add(current);
+            for (const n of byId.get(current) ?? []) {
+                merged.add(n);
+            }
+            current = categories.find((x) => x.id === current)?.parent;
+        }
+        byId.set(c.id, [...merged]);
+    }
+    return byId;
+};
+
+const isPlainCommentMatched = (
+    bill: Bill,
+    comment?: string,
+    categoryNames?: Map<string, string[]>,
+) => {
     if (!comment) return true;
-    return Boolean(bill.comment?.includes(comment));
+    const keyword = comment.toLowerCase();
+    if (bill.comment?.toLowerCase().includes(keyword)) return true;
+    // 关键词同时匹配分类名称（含父分类、含中英文翻译）
+    return (
+        categoryNames?.get(bill.categoryId)?.some((n) => n.includes(keyword)) ??
+        false
+    );
 };
 
 const isAssetsMatched = (bill: Bill, assets?: boolean) => {
@@ -134,6 +181,9 @@ export const createBillMatcher = (
             ? compileFilterQuery(parseFilterQuery(filter.comment), ctx ?? {})
             : null;
     const baseCurrency = filter.baseCurrency ?? DefaultBaseCurrencyId;
+    const categoryNames = buildCategoryNameIndex(
+        ctx?.categories?.length ? ctx.categories : BillCategories,
+    );
     return (bill) =>
         Boolean(
             isTypeMatched(bill, filter.type) &&
@@ -149,7 +199,11 @@ export const createBillMatcher = (
                 Boolean(isScheduledMatched(bill, filter.scheduled)) &&
                 (compiledQuery
                     ? matchFilterQuery(compiledQuery, bill)
-                    : isPlainCommentMatched(bill, filter.comment)) &&
+                    : isPlainCommentMatched(
+                          bill,
+                          filter.comment,
+                          categoryNames,
+                      )) &&
                 isTagsMatched(bill, filter.tags) &&
                 isCurrenciesMatched(bill, baseCurrency, filter.currencies) &&
                 isExcludeTagsMatched(bill, filter.excludeTags),
