@@ -4,6 +4,8 @@ import { toast } from "sonner";
 import { useIntl } from "@/locale";
 import { measure } from "@/measurement";
 import { useLedgerStore } from "@/store/ledger";
+import { usePreferenceStore } from "@/store/preference";
+import { locateCurrentPosition } from "@/utils/locate";
 import { parseTextToBill } from "../assistant/text-to-bill";
 import { Button } from "../ui/button";
 
@@ -27,11 +29,24 @@ export default function KeyboardForm({
                 return;
             }
             setLoading(true);
-            const bills = await parseTextToBill(textValue);
+            const [bills, location] = await Promise.all([
+                parseTextToBill(textValue),
+                // 受设置「新增记账时自动记录位置」控制，失败不阻塞记账
+                usePreferenceStore.getState().autoLocateWhenAddBill
+                    ? locateCurrentPosition().catch((error) => {
+                          console.warn("keyboard add locate failed:", error);
+                          return undefined;
+                      })
+                    : Promise.resolve(undefined),
+            ]);
             if (bills.length === 0) {
                 return;
             }
-            await useLedgerStore.getState().addBills(bills);
+            await useLedgerStore
+                .getState()
+                .addBills(
+                    location ? bills.map((b) => ({ ...b, location })) : bills,
+                );
             measure("bill_created", {
                 source: "keyboard",
                 item_count: bills.length,

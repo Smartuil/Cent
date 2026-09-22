@@ -4,6 +4,8 @@ import { useLongPress } from "@/hooks/use-long-press";
 import { t } from "@/locale";
 import { measure } from "@/measurement";
 import { useLedgerStore } from "@/store/ledger";
+import { usePreferenceStore } from "@/store/preference";
+import { locateCurrentPosition } from "@/utils/locate";
 import { parseTextToBill } from "../assistant/text-to-bill";
 import createConfirmProvider from "../confirm";
 import { BaseButton } from "./base";
@@ -54,11 +56,26 @@ export function VoiceAddButton({ onClick }: { onClick?: () => void }) {
                     return;
                 }
                 setFormState((prev) => ({ ...prev, phase: "parsing" }));
-                const bills = await parseTextToBill(text);
+                const [bills, location] = await Promise.all([
+                    parseTextToBill(text),
+                    // 受设置「新增记账时自动记录位置」控制，失败不阻塞记账
+                    usePreferenceStore.getState().autoLocateWhenAddBill
+                        ? locateCurrentPosition().catch((error) => {
+                              console.warn("voice add locate failed:", error);
+                              return undefined;
+                          })
+                        : Promise.resolve(undefined),
+                ]);
                 if (bills.length === 0) {
                     return;
                 }
-                await useLedgerStore.getState().addBills(bills);
+                await useLedgerStore
+                    .getState()
+                    .addBills(
+                        location
+                            ? bills.map((b) => ({ ...b, location }))
+                            : bills,
+                    );
                 measure("bill_created", {
                     source: "voice",
                     item_count: bills.length,

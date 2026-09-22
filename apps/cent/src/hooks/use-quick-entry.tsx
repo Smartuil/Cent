@@ -13,6 +13,7 @@ import { usePreferenceStore } from "@/store/preference";
 import { asyncOnce } from "@/utils/async";
 import { readClipboard } from "@/utils/clipboard";
 import { decryptAES } from "@/utils/encrypt";
+import { locateCurrentPosition } from "@/utils/locate";
 import useCategory from "./use-category";
 import { usePageVisibility } from "./use-page-visibility";
 import useRapidReducedMotionChange from "./use-reduce-motion";
@@ -176,11 +177,24 @@ const _checkRelayrData = async () => {
         const data = await fetchData();
         if (data) {
             // 如果有数据，通过 toast 展示
-            const bills = await xmlTextToBills(data);
+            const [bills, location] = await Promise.all([
+                xmlTextToBills(data),
+                // 受设置「新增记账时自动记录位置」控制，失败不阻塞记账
+                usePreferenceStore.getState().autoLocateWhenAddBill
+                    ? locateCurrentPosition().catch((error) => {
+                          console.warn("relayr add locate failed:", error);
+                          return undefined;
+                      })
+                    : Promise.resolve(undefined),
+            ]);
             if (bills.length === 0) {
                 return;
             }
-            await useLedgerStore.getState().addBills(bills);
+            await useLedgerStore
+                .getState()
+                .addBills(
+                    location ? bills.map((b) => ({ ...b, location })) : bills,
+                );
             measure("bill_created", {
                 source: "relayr",
                 item_count: bills.length,
