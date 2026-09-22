@@ -1,9 +1,11 @@
 /**
- * WGS-84 -> GCJ-02（国测局加密坐标）转换
+ * WGS-84 与 GCJ-02（国测局加密坐标）双向转换
  *
- * 浏览器 Geolocation API 返回 WGS-84 坐标，而高德地图使用 GCJ-02 坐标系，
- * 直接混用会产生约 100~700 米的固定偏移。本算法为业界通用的近似转换，
- * 精度约 1~2 米。中国境外坐标原样返回（无偏移）。
+ * 本应用坐标存储统一使用 WGS-84（GPS 通用坐标，跨端一致），
+ * 仅在渲染高德地图（GCJ-02 坐标系）时做展示层转换：
+ * 浏览器 Geolocation API 返回 WGS-84，高德定位/地图选点返回 GCJ-02，
+ * 直接混用会产生约 100~700 米的固定偏移。正算为业界通用近似算法，
+ * 精度约 1~2 米；反算用迭代法，收敛到厘米级。中国境外坐标原样返回。
  */
 const PI = Math.PI;
 const SEMI_MAJOR_AXIS = 6378245.0; // 克拉索夫斯基椭球长半轴
@@ -79,4 +81,22 @@ export const wgs84ToGcj02 = (lng: number, lat: number): [number, number] => {
         (dLng * 180.0) /
         ((SEMI_MAJOR_AXIS / sqrtMagic) * Math.cos(radLat) * PI);
     return [lng + dLng, lat + dLat];
+};
+
+/**
+ * GCJ-02 经纬度转 WGS-84（迭代反算，收敛到厘米级精度），返回 [lng, lat]。
+ * 用于把高德定位/地图选点结果换算回通用坐标存储。
+ */
+export const gcj02ToWgs84 = (lng: number, lat: number): [number, number] => {
+    if (outOfChina(lng, lat)) {
+        return [lng, lat];
+    }
+    let wgsLng = lng;
+    let wgsLat = lat;
+    for (let i = 0; i < 3; i++) {
+        const [gLng, gLat] = wgs84ToGcj02(wgsLng, wgsLat);
+        wgsLng += lng - gLng;
+        wgsLat += lat - gLat;
+    }
+    return [wgsLng, wgsLat];
 };
