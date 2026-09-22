@@ -118,18 +118,36 @@ const buildCategoryNameIndex = (
     return byId;
 };
 
+/** 建立 tagId -> 标签名变体（小写）的索引，用于普通关键词搜索命中标签 */
+const buildTagNameIndex = (
+    tags: ReadonlyArray<{ id: string; name: string }> | undefined,
+): Map<string, string[]> => {
+    const byId = new Map<string, string[]>();
+    for (const tag of tags ?? []) {
+        byId.set(tag.id, categoryNameVariants(tag.name));
+    }
+    return byId;
+};
+
 const isPlainCommentMatched = (
     bill: Bill,
     comment?: string,
     categoryNames?: Map<string, string[]>,
+    tagNames?: Map<string, string[]>,
 ) => {
     if (!comment) return true;
     const keyword = comment.toLowerCase();
     if (bill.comment?.toLowerCase().includes(keyword)) return true;
     // 关键词同时匹配分类名称（含父分类、含中英文翻译）
+    if (categoryNames?.get(bill.categoryId)?.some((n) => n.includes(keyword))) {
+        return true;
+    }
+    // 关键词同时匹配标签名
     return (
-        categoryNames?.get(bill.categoryId)?.some((n) => n.includes(keyword)) ??
-        false
+        tagNames !== undefined &&
+        bill.tagIds?.some((id) =>
+            tagNames.get(id)?.some((n) => n.includes(keyword)),
+        ) === true
     );
 };
 
@@ -184,6 +202,7 @@ export const createBillMatcher = (
     const categoryNames = buildCategoryNameIndex(
         ctx?.categories?.length ? ctx.categories : BillCategories,
     );
+    const tagNames = buildTagNameIndex(ctx?.tags);
     return (bill) =>
         Boolean(
             isTypeMatched(bill, filter.type) &&
@@ -203,6 +222,7 @@ export const createBillMatcher = (
                           bill,
                           filter.comment,
                           categoryNames,
+                          tagNames,
                       )) &&
                 isTagsMatched(bill, filter.tags) &&
                 isCurrenciesMatched(bill, baseCurrency, filter.currencies) &&
